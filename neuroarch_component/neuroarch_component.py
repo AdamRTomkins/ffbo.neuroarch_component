@@ -89,8 +89,30 @@ class neuroarch_server(object):
                 return output.get_as()[0].to_json()
         except Exception as e:
             raise e
-        
 
+    # Hackathon 2017
+    def retrieve_neuron_by_id(self,key,value):
+        # Retrieve an object by ID, in order to allow direct addressing to na objects or vfb neurons.
+
+        keys = ['na','vfb']#,'fc']  # A list of valid ids
+                                        # na is a direct neuroarch ID minus the #
+                                        # vfb is virtual fly brain with tag vib_id
+                                        # fc will be fly circuit, currently in name
+ 
+        assert key in keys
+        if key == 'na':
+            try:
+                n = self.graph.get_element(nid)
+            except Exception as e:
+                raise e
+        elif key == 'vfb': 
+            n= graph.Neurons.query(vfb_id=value).first()
+        if n == None:
+            return {}
+        else:
+            output = QueryWrapper.from_objs(self.graph,[n])
+            return output.get_as()[0].to_json()
+            # This needs to return Morhology 
 
     def process_query(self,task):
         """ configure a task processing, and format the results as desired """
@@ -536,6 +558,17 @@ class AppSession(ApplicationSession):
 
         uri = 'ffbo.na.retrieve_neuron.%s' % str(details.session)
         yield self.register(retrieve_neuron, uri,RegisterOptions(concurrency=self._max_concurrency))
+        print "registered %s" % uri
+
+        # Register a function to retrieve a single neuron information by registered ids
+        def retrieve_neuron_by_id(key,value):
+            self.log.info("retrieve_neuron_by_id() called with neuron id: {nid} ", {nid = key)
+            res = server.retrieve_neuron_by_id(key,value)
+            print "retrieve neuron result: " + str(res)
+            return res
+
+        uri = 'ffbo.na.retrieve_neuron_by_id.%s' % str(details.session)
+        yield self.register(retrieve_neuron_by_id, uri,RegisterOptions(concurrency=self._max_concurrency))
         print "registered %s" % uri
 
 
