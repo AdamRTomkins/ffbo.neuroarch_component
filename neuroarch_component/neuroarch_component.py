@@ -98,7 +98,8 @@ class neuroarch_server(object):
                                         # na is a direct neuroarch ID minus the #
                                         # vfb is virtual fly brain with tag vib_id
                                         # fc will be fly circuit, currently in name
- 
+        print key
+        print value
         assert key in keys
         if key == 'na':
             try:
@@ -106,13 +107,16 @@ class neuroarch_server(object):
             except Exception as e:
                 raise e
         elif key == 'vfb': 
-            n= graph.Neurons.query(vfb_id=value).first()
+            
+            n= self.graph.Neurons.query(vfb_id=value).first()
+            print type(n)
         if n == None:
             return {}
         else:
             output = QueryWrapper.from_objs(self.graph,[n])
-            return output.get_as()[0].to_json()
-            # This needs to return Morhology 
+            df = output.get_data(cls='MorphologyData')[0]
+            output = df[['sample','identifier','x','y','z','r','parent','name']].to_dict(orient='index')
+            return output 
 
     def process_query(self,task):
         """ configure a task processing, and format the results as desired """
@@ -562,7 +566,8 @@ class AppSession(ApplicationSession):
 
         # Register a function to retrieve a single neuron information by registered ids
         def retrieve_neuron_by_id(key,value):
-            self.log.info("retrieve_neuron_by_id() called with neuron id: {nid} ", {nid = key)
+            self.log.info("retrieve_neuron_by_id() called with neuron id: {nid} ", nid = key)
+            server = neuroarch_server()
             res = server.retrieve_neuron_by_id(key,value)
             print "retrieve neuron result: " + str(res)
             return res
