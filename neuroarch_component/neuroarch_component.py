@@ -91,32 +91,53 @@ class neuroarch_server(object):
             raise e
 
     # Hackathon 2017
-    def retrieve_neuron_by_id(self,key,value):
+    def retrieve_by_id(self,task,threshold):
         # Retrieve an object by ID, in order to allow direct addressing to na objects or vfb neurons.
+        # WIP: Add thresholding and chunking
 
-        keys = ['na','vfb']#,'fc']  # A list of valid ids
+        key_types = ['na','vfb']#,'fc']  # A list of valid ids
                                         # na is a direct neuroarch ID minus the #
                                         # vfb is virtual fly brain with tag vib_id
                                         # fc will be fly circuit, currently in name
-        print key
-        print value
-        assert key in keys
-        if key == 'na':
+        
+        if not type(task) == dict:
+            task = json.loads(task)
+        task = byteify(task)
+        
+        user = self.user
+        
+        key_type = task["key_type"]
+        key = task["key"]
+
+        assert key_type in key_types
+        if key_type == 'na':
             try:
-                n = self.graph.get_element(nid)
+                n = self.graph.get_element('#'+key)
+                print "############"
+                print type(n)
             except Exception as e:
                 raise e
-        elif key == 'vfb': 
-            
-            n= self.graph.Neurons.query(vfb_id=value).first()
+        elif key_type == 'vfb': 
+            n= self.graph.Neurons.query(vfb_id=key).first()
+            print "############"
             print type(n)
+        else:
+            pass
+
         if n == None:
-            return {}
+            return ({},False)
         else:
             output = QueryWrapper.from_objs(self.graph,[n])
             df = output.get_data(cls='MorphologyData')[0]
             output = df[['sample','identifier','x','y','z','r','parent','name']].to_dict(orient='index')
-            return output 
+            
+            if threshold and isinstance(output, dict):
+                chunked_output = []
+                for c in chunks(output, threshold):
+                    chunked_output.append(c)
+                output = chunked_output
+ 
+            return (output, True) 
 
     def process_query(self,task):
         """ configure a task processing, and format the results as desired """
@@ -464,6 +485,10 @@ class AppSession(ApplicationSession):
     def na_query_on_end(self):
         self._current_concurrency -= 1
         self.log.info('na_query() ended ({invocations} invocations, current concurrency {current_concurrency} of max {max_concurrency})', invocations=self._invocations_served, current_concurrency=self._current_concurrency, max_concurrency=self._max_concurrency)
+
+    def retrieve_by_id_on_end(self):
+        self._current_concurrency -= 1
+        self.log.info('retrieve_by_id() ended ({invocations} invocations, current concurrency {current_concurrency} of max {max_concurrency})', invocations=self._invocations_served, current_concurrency=self._current_concurrency, max_concurrency=self._max_concurrency)
         
     @inlineCallbacks
     def onJoin(self, details):
@@ -564,17 +589,63 @@ class AppSession(ApplicationSession):
         yield self.register(retrieve_neuron, uri,RegisterOptions(concurrency=self._max_concurrency))
         print "registered %s" % uri
 
-        # Register a function to retrieve a single neuron information by registered ids
-        def retrieve_neuron_by_id(key,value):
-            self.log.info("retrieve_neuron_by_id() called with neuron id: {nid} ", nid = key)
-            server = neuroarch_server()
-            res = server.retrieve_neuron_by_id(key,value)
-            print "retrieve neuron result: " + str(res)
-            return res
+#######################
+        @inlineCallbacks
+        def retrieve_by_id(task,details=None):
+            # task is a dictionary of {key_type:string, key:string, user:string}
+            self._invocations_served += 1
+            self._current_concurrency += 1
 
-        uri = 'ffbo.na.retrieve_neuron_by_id.%s' % str(details.session)
-        yield self.register(retrieve_neuron_by_id, uri,RegisterOptions(concurrency=self._max_concurrency))
-        print "registered %s" % uri
+            if not isinstance(task, dict):
+                task = json.loads(task)
+            task = byteify(task)
+
+            user_id = task['user'] if (details.caller_authrole == 'processor' and 'user' in task) \
+                      else details.caller
+            threshold = None
+
+            if details.progress or 'data_callback_uri' in task: threshold=100 
+
+            server = self.user_list.user(user_id)['server']
+
+            (res, succ) = yield threads.deferToThread(server.retrieve_by_id, task, threshold)
+            
+            if (not details.caller_authrole == 'processor'):
+                try:
+                    del task['user_msg']
+                except:
+                    pass
+            if 'user_msg' in task:
+                if succ:
+                    yield self.call(task['user_msg'], {'info':{'success':
+                                                               'Fetching results from NeuroArch'}})
+                else:
+                    yield self.call(task['user_msg'], {'info':{'error':
+                                                               'Error executing query on NeuroArch'}})
+            if('data_callback_uri' in task):
+                uri = task['data_callback_uri'] + '.%s' % user_id
+                for c in res:
+                    try:
+                        succ = yield self.call(uri, c)
+                    except ApplicationError as e:
+                        print e
+                self.retrieve_by_id_on_end()
+                returnValue(succ)
+            else:
+                if details.progress:
+                    for c in res:
+                        details.progress(c)
+                    self.retrieve_by_id_on_end()
+                    returnValue({'success': {'info':'Finished fetching all results from database'}})
+                else:
+                    self.retrieve_by_id_on_end()
+                    returnValue({'success': {'info':'Finished fetching all results from database',
+                                                 'data': res}})
+        uri = 'ffbo.na.retrieve_by_id.%s' % str(details.session)
+
+        yield self.register(retrieve_by_id, uri, RegisterOptions(details_arg='details',concurrency=self._max_concurrency))
+
+###################
 
 
         # Listen for ffbo.processor.connected
