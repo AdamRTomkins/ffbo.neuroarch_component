@@ -93,7 +93,7 @@ class neuroarch_server(object):
     # Hackathon 2017
     def retrieve_by_id(self,task,threshold):
         # Retrieve an object by ID, in order to allow direct addressing to na objects or vfb neurons.
-        # WIP: Add thresholding and chunking
+        # WIP: Test thresholding and chunking with larger NA 'tags'
 
         key_types = ['na','vfb']#,'fc']  # A list of valid ids
                                         # na is a direct neuroarch ID minus the #
@@ -113,14 +113,10 @@ class neuroarch_server(object):
         if key_type == 'na':
             try:
                 n = self.graph.get_element('#'+key)
-                print "############"
-                print type(n)
             except Exception as e:
                 raise e
         elif key_type == 'vfb': 
             n= self.graph.Neurons.query(vfb_id=key).first()
-            print "############"
-            print type(n)
         else:
             pass
 
@@ -128,6 +124,9 @@ class neuroarch_server(object):
             return ({},False)
         else:
             output = QueryWrapper.from_objs(self.graph,[n])
+            # Add hook into user system
+            user.append(output)
+            
             df = output.get_data(cls='MorphologyData')[0]
             output = df[['sample','identifier','x','y','z','r','parent','name']].to_dict(orient='index')
             
